@@ -1,0 +1,39 @@
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints
+
+# VSCode / PyCharm / IDE
+.vscode/
+.idea/
+*.iml
+
+# Logs
+*.log
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Large data files (SQLite DBs, raw data)
+data/*.db
+*.sqlite
+*.sqlite3
+
+# Environment and config files
+.env
+*.bak
+
+# Node or frontend stuff (if any)
+node_modules/
