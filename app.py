@@ -35,6 +35,9 @@ app.layout = make_layout(fig_top, chem_options)
 # Callbacks
 register_callbacks(app, df)
 
-# Local run
+# Expose for gunicorn
+server = app.server
+
+# Run locally
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8050, debug=True)
+    app.run(debug=True)
