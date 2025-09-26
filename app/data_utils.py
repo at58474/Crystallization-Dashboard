@@ -5,20 +5,32 @@ Handles database loading and small preprocessing helpers for crystallization EDA
 """
 
 from pathlib import Path
+import os
 import sqlite3
 import pandas as pd
 import plotly.express as px
 
-# Find project root (directory containing app.py)
+# Default: look for data/CrystallizationEDA.db relative to project root
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DB_PATH = ROOT_DIR / "data" / "CrystallizationEDA.db"
+DEFAULT_DB_PATH = ROOT_DIR / "data" / "CrystallizationEDA.db"
 TABLE = "conditions"
 
 
-def load_data(db_path: Path = DB_PATH, table: str = TABLE) -> pd.DataFrame:
-    """Load conditions table from SQLite into a DataFrame."""
-    if not db_path.exists():
-        raise FileNotFoundError(f"DB not found: {db_path}")
+def load_data(table: str = TABLE) -> pd.DataFrame:
+    """
+    Load conditions table from SQLite into a DataFrame.
+
+    - Uses DB_PATH env var if set (Render deployment).
+    - Falls back to DEFAULT_DB_PATH locally.
+    - If no DB found, return empty DataFrame so app can still boot.
+    """
+    db_path = os.environ.get("DB_PATH", str(DEFAULT_DB_PATH))
+
+    if not Path(db_path).exists():
+        print(f"[WARN] Database not found at {db_path}. Starting with empty DataFrame.")
+        # Minimal empty schema so the app doesn't break
+        return pd.DataFrame(columns=["Protein_ID", "Standardized_Precipitate"])
+
     with sqlite3.connect(db_path) as conn:
         df = pd.read_sql(f"SELECT * FROM {table}", conn)
     return df
@@ -82,7 +94,6 @@ def aa_composition_bar(composition: dict, title: str):
     """
     Make a bar chart of amino acid composition with dark theme.
     """
-    import pandas as pd
     df = pd.DataFrame({
         "Amino Acid": list(composition.keys()),
         "Fraction": list(composition.values())
