@@ -27,7 +27,7 @@ sql_top50 = f"""
     WHERE Standardized_Precipitate IS NOT NULL
 """
 df_top50 = run_query(sql_top50)
-fig_top = make_top50_overview(df_top50)
+fig_top = make_top50_overview()
 
 # Build dropdown options directly from DB
 sql_opts = f"""
