@@ -2,9 +2,8 @@
 callbacks.py
 --------------
 All Dash callbacks for:
-- Chemical drill-down (summary + tabs: Concentration, pH, Co-occurrence, Sequence Explorer)
+- Chemical drill-down (summary + tabs: Concentration, pH, Co-occurrence)
 - Protein drill-down table + AA composition
-Now queries the DB directly on demand (no global df preload).
 """
 
 import dash
@@ -13,24 +12,36 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
-
 from collections import Counter
 
-from app.data_utils import (
-    run_query,
-    parse_ph_series,
-    concentration_series_mm_and_pct,
-    compute_sequence_length,
-    compute_aa_composition,
-    aa_composition_bar,
-)
+from app.data_utils import parse_ph_series, concentration_series_mm_and_pct
 from app.figures import (
     make_hist_with_kde_binwidth,
     cooccurrence_heatmap_and_topbar,
     empty_fig,
+    aa_composition_bar,   # ✅ dark version comes from figures.py
 )
 
-TABLE = "conditions"
+
+# -----------------------------
+# Amino acid utilities
+# -----------------------------
+def compute_sequence_length(fasta: str) -> int:
+    """Return sequence length from FASTA string."""
+    if not fasta or not isinstance(fasta, str):
+        return 0
+    return len("".join(fasta.split()))
+
+
+def compute_aa_composition(fasta: str) -> dict:
+    """Return normalized amino acid composition (20 standard AAs)."""
+    aas = "ACDEFGHIKLMNPQRSTVWY"
+    seq = "".join(fasta.split()).upper()
+    counts = Counter(seq)
+    total = sum(counts.values())
+    if total == 0:
+        return {aa: 0 for aa in aas}
+    return {aa: counts.get(aa, 0) / total for aa in aas}
 
 
 # -----------------------------
@@ -47,20 +58,17 @@ def quant_summary_with_counts(series: pd.Series) -> tuple[str, int]:
     return f"{q05:.2f} – {q95:.2f} (median {q50:.2f})", len(s)
 
 
-def summary_block(d: pd.DataFrame, selected: str, total_all: int) -> html.Div:
-    """Return HTML summary block for a given chemical subset."""
+def summary_block(d: pd.DataFrame, df_all: pd.DataFrame, selected: str) -> html.Div:
+    """Return HTML summary block with counts, CID, sequence length, and concentration ranges."""
     total_count = len(d)
-    percent = 100 * total_count / max(total_all, 1)
+    total_all = max(len(df_all), 1)
+    percent = 100 * total_count / total_all
     unique_proteins = d["Protein_ID"].nunique()
     cid_vals = d["CID"].dropna().unique()
     cid_str = str(cid_vals[0]) if len(cid_vals) else "N/A"
-    pubchem_link = (
-        f"https://pubchem.ncbi.nlm.nih.gov/compound/{cid_str}"
-        if cid_str != "N/A"
-        else None
-    )
+    pubchem_link = f"https://pubchem.ncbi.nlm.nih.gov/compound/{cid_str}" if cid_str != "N/A" else None
 
-    # Average sequence length
+    # --- Average sequence length ---
     if "FASTA_Sequence" in d.columns:
         lengths = d["FASTA_Sequence"].dropna().apply(len)
         avg_len = lengths.mean() if not lengths.empty else None
@@ -127,8 +135,8 @@ def build_concentration_tab(d, selected, binwidth_mm, binwidth_pct, focus_iqr, l
 
     return dbc.Row(
         [
-            dbc.Col(dbc.Card(dbc.CardBody([dcc.Graph(figure=fig_mm)])), width=6),
-            dbc.Col(dbc.Card(dbc.CardBody([dcc.Graph(figure=fig_pct)])), width=6),
+            dbc.Col(dbc.Card(dbc.CardBody([dcc.Graph(figure=fig_mm)]), class_name="mb-3"), width=6),
+            dbc.Col(dbc.Card(dbc.CardBody([dcc.Graph(figure=fig_pct)]), class_name="mb-3"), width=6),
         ]
     )
 
@@ -141,18 +149,25 @@ def build_ph_tab(d, selected, focus_iqr):
         fig_ph = empty_fig("pH distribution")
     else:
         bw = 0.25  # fixed bin size
-        hist = go.Histogram(x=s, xbins=dict(size=bw),
-                            marker=dict(line=dict(width=0)), opacity=0.85, name="Counts")
+        hist = go.Histogram(
+            x=s,
+            xbins=dict(size=bw),
+            marker=dict(line=dict(width=0)),
+            opacity=0.85,
+            name="Counts",
+            marker_color="lightskyblue",
+        )
         fig_ph = go.Figure(hist)
         fig_ph.update_layout(
-            template="plotly_dark",
+            template="plotly_dark",  # ✅ match theme
             title=f"pH distribution for {selected}",
-            xaxis_title="pH", yaxis_title="Count",
+            xaxis_title="pH",
+            yaxis_title="Count",
             margin=dict(l=40, r=20, t=50, b=40),
         )
         if focus_iqr and len(s) >= 3:
             q1, q3 = s.quantile(0.25), s.quantile(0.75)
-            lo, hi = q1 - 1.5*(q3-q1), q3 + 1.5*(q3-q1)
+            lo, hi = q1 - 1.5 * (q3 - q1), q3 + 1.5 * (q3 - q1)
             if lo < hi:
                 fig_ph.update_xaxes(range=[max(s.min(), lo), min(s.max(), hi)])
         fig_ph.update_xaxes(type="linear", dtick=bw)
@@ -160,43 +175,18 @@ def build_ph_tab(d, selected, focus_iqr):
     return dbc.Row([dbc.Col(dbc.Card(dbc.CardBody([dcc.Graph(figure=fig_ph)])), width=12)])
 
 
-def build_co_tab(selected):
-    # Pull subset for co-occurrence
-    sql = f"SELECT Protein_ID, Standardized_Precipitate FROM {TABLE} WHERE Standardized_Precipitate = ?"
-    d_sel = run_query(sql, (selected,))
-
-    sql_all = f"SELECT Protein_ID, Standardized_Precipitate FROM {TABLE}"
-    df_all = run_query(sql_all)
-
-    heatmap_fig, bar_fig = cooccurrence_heatmap_and_topbar(df_all, d_sel, selected, top_k=15)
+def build_co_tab(df_all, d, selected):
+    heatmap_fig, bar_fig = cooccurrence_heatmap_and_topbar(df_all, d, selected, top_k=15)
     return dbc.Row([
         dbc.Col(dbc.Card(dbc.CardBody([dcc.Graph(figure=heatmap_fig)])), width=12),
         dbc.Col(dbc.Card(dbc.CardBody([dcc.Graph(figure=bar_fig)])), width=12),
     ])
 
 
-def build_sequence_tab():
-    sql = f"SELECT Standardized_Precipitate, FASTA_Sequence FROM {TABLE}"
-    df = run_query(sql)
-
-    df["SeqLen"] = df["FASTA_Sequence"].fillna("").apply(compute_sequence_length)
-    agg = df.groupby("Standardized_Precipitate").agg(AvgLen=("SeqLen", "mean")).reset_index()
-
-    len_fig = px.bar(
-        agg.sort_values("AvgLen", ascending=False).head(20),
-        x="Standardized_Precipitate", y="AvgLen",
-        title="Average Sequence Length per Chemical",
-        template="plotly_dark",
-    )
-    len_fig.update_layout(xaxis_tickangle=45, margin=dict(l=40, r=20, t=50, b=120))
-
-    return dbc.Row([dbc.Col(dbc.Card(dbc.CardBody([dcc.Graph(figure=len_fig)])), width=12)])
-
-
 # -----------------------------
 # Register callbacks
 # -----------------------------
-def register_callbacks(app):
+def register_callbacks(app, df):
     """Register all Dash callbacks."""
 
     @app.callback(
@@ -226,22 +216,15 @@ def register_callbacks(app):
                 mm_label, pct_label,
             )
 
-        sql = f"SELECT * FROM {TABLE} WHERE Standardized_Precipitate = ?"
-        d = run_query(sql, (selected,))
-
-        sql_all = f"SELECT Protein_ID, Standardized_Precipitate, CID, FASTA_Sequence, Concentration_Unit, Concentration_Value, Concentration_Converted, pH FROM {TABLE}"
-        df_all = run_query(sql_all)
-
-        summary = summary_block(d, selected, len(df_all))
+        d = df[df["Standardized_Precipitate"] == selected]
+        summary = summary_block(d, df, selected)
 
         if tab == "tab-conc":
             content = build_concentration_tab(d, selected, bw_mm_clamped, bw_pct_clamped, focus_iqr, logy=False)
         elif tab == "tab-ph":
             content = build_ph_tab(d, selected, focus_iqr)
         elif tab == "tab-co":
-            content = build_co_tab(selected)
-        elif tab == "tab-seq":
-            content = build_sequence_tab()
+            content = build_co_tab(df, d, selected)
         else:
             content = html.Div("Select a tab.", className="text-muted")
 
@@ -256,10 +239,8 @@ def register_callbacks(app):
         if not n_clicks or not protein_id:
             return html.Div("⬆ Enter a Protein_ID above and click Show Conditions.", className="text-muted")
 
-        protein_id = protein_id.strip().upper()
-        sql = f"SELECT * FROM {TABLE} WHERE UPPER(Protein_ID) = ?"
-        d = run_query(sql, (protein_id,))
-
+        protein_id = protein_id.strip()
+        d = df[df["Protein_ID"].astype(str).str.upper() == protein_id.upper()]
         if d.empty:
             return html.Div(f"No conditions found for Protein_ID '{protein_id}'.", className="text-danger")
 

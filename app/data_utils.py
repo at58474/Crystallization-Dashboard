@@ -1,8 +1,7 @@
 """
 data_utils.py
 ----------------
-Handles database access and preprocessing helpers for crystallization EDA.
-Now designed to query DB on demand instead of loading everything upfront.
+Handles database loading and small preprocessing helpers for crystallization EDA.
 """
 
 from pathlib import Path
@@ -11,46 +10,32 @@ import sqlite3
 import pandas as pd
 import plotly.express as px
 
-
-# -----------------------------
-# DB Path Helpers
-# -----------------------------
+# Default: look for data/CrystallizationEDA.db relative to project root
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_DB_PATH = ROOT_DIR / "data" / "CrystallizationEDA.db"
 TABLE = "conditions"
 
 
-def get_db_path() -> str:
-    """Return DB path (env var first, fallback to local)."""
-    return os.environ.get("DB_PATH", str(DEFAULT_DB_PATH))
-
-
-def run_query(sql: str, params: tuple = ()) -> pd.DataFrame:
-    """Run a SQL query against the SQLite DB and return a DataFrame."""
-    db_path = get_db_path()
-    if not Path(db_path).exists():
-        print(f"[WARN] Database not found at {db_path}. Returning empty DataFrame.")
-        return pd.DataFrame()
-    with sqlite3.connect(db_path) as conn:
-        return pd.read_sql(sql, conn, params=params)
-
-
-def fetch_top50_chemicals() -> pd.DataFrame:
-    """Return counts of top 50 most common Standardized_Precipitates."""
-    sql = f"""
-        SELECT Standardized_Precipitate, COUNT(*) as count
-        FROM {TABLE}
-        WHERE Standardized_Precipitate IS NOT NULL
-        GROUP BY Standardized_Precipitate
-        ORDER BY count DESC
-        LIMIT 50
+def load_data(table: str = TABLE) -> pd.DataFrame:
     """
-    return run_query(sql)
+    Load conditions table from SQLite into a DataFrame.
+
+    - Uses DB_PATH env var if set (Render deployment).
+    - Falls back to DEFAULT_DB_PATH locally.
+    - If no DB found, return empty DataFrame so app can still boot.
+    """
+    db_path = os.environ.get("DB_PATH", str(DEFAULT_DB_PATH))
+
+    if not Path(db_path).exists():
+        print(f"[WARN] Database not found at {db_path}. Starting with empty DataFrame.")
+        # Minimal empty schema so the app doesn't break
+        return pd.DataFrame(columns=["Protein_ID", "Standardized_Precipitate"])
+
+    with sqlite3.connect(db_path) as conn:
+        df = pd.read_sql(f"SELECT * FROM {table}", conn)
+    return df
 
 
-# -----------------------------
-# Data Parsing Helpers
-# -----------------------------
 def parse_ph_series(series: pd.Series) -> pd.Series:
     """Extract numeric pH from strings like 'PH 7.5' or '7.5'."""
     def _one(s):
@@ -117,7 +102,7 @@ def aa_composition_bar(composition: dict, title: str):
         df,
         x="Amino Acid",
         y="Fraction",
-        template="plotly_dark",
+        template="plotly_dark",   # 🔹 force dark background
         title=title,
         color="Fraction",
         color_continuous_scale="Viridis",
