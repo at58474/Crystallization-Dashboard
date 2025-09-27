@@ -27,7 +27,7 @@ server = app.server
 
 # Top 50 overview + chem dropdown (query directly from DB)
 df_top50 = fetch_top50_chemicals()
-fig_top = make_top50_overview(df_top50)
+fig_top = make_top50_overview()
 chem_options = [{"label": c, "value": c}
                 for c in sorted(df_top50["Standardized_Precipitate"].dropna().unique())]
 
