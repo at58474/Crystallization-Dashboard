@@ -1,42 +1,60 @@
 """
 main.py
--------
-Entry point for the Crystallization EDA dashboard.
-- Configures Dash
-- Builds initial layout
-- Registers callbacks
+--------
+Main entry point. Runs Dash server, builds layout, and registers callbacks.
 """
 
 import dash
 import dash_bootstrap_components as dbc
 import plotly.io as pio
 
+from app.data_utils import run_query
 from app.figures import make_top50_overview
 from app.layout import make_layout
 from app.callbacks import register_callbacks
-from app.data_utils import get_db_path, fetch_top50_chemicals
 
 pio.templates.default = "plotly_dark"
 
+# -----------------------------
+# Load initial data
+# -----------------------------
+TABLE = "conditions"
+
+# Build Top 50 overview figure
+sql_top50 = f"""
+    SELECT Standardized_Precipitate, Protein_ID
+    FROM {TABLE}
+    WHERE Standardized_Precipitate IS NOT NULL
+"""
+df_top50 = run_query(sql_top50)
+fig_top = make_top50_overview(df_top50)
+
+# Build dropdown options directly from DB
+sql_opts = f"""
+    SELECT DISTINCT Standardized_Precipitate
+    FROM {TABLE}
+    WHERE Standardized_Precipitate IS NOT NULL
+"""
+chem_values = run_query(sql_opts)["Standardized_Precipitate"].sort_values().tolist()
+chem_options = [{"label": c, "value": c} for c in chem_values]
+
+# -----------------------------
 # Dash app
+# -----------------------------
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.SLATE])
 app.title = "Crystallization EDA"
-
-# 👇 expose Flask server for Render
-server = app.server
-
-# Top 50 overview + chem dropdown (query directly from DB)
-df_top50 = fetch_top50_chemicals()
-fig_top = make_top50_overview()
-chem_options = [{"label": c, "value": c}
-                for c in sorted(df_top50["Standardized_Precipitate"].dropna().unique())]
 
 # Layout
 app.layout = make_layout(fig_top, chem_options)
 
-# Callbacks — they will query DB on demand
+# Callbacks
 register_callbacks(app)
 
-# Local run
+# Expose server for Render
+server = app.server
+
+# -----------------------------
+# Run local
+# -----------------------------
 if __name__ == "__main__":
     app.run(debug=True)

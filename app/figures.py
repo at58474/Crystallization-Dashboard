@@ -66,8 +66,10 @@ def make_top50_overview():
         agg,
         x="Standardized_Precipitate",
         y="count",
+        color="count",  # <--- add this back
         title="Top 50 Most Common Precipitates",
         template="plotly_dark",
+        color_continuous_scale="Viridis",
     )
     fig.update_layout(
         xaxis_tickangle=45,
